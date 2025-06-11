@@ -41,23 +41,23 @@ jobs:
         run: |
           curl -o epss_scores.csv https://epss.cyentia.com/epss_scores-current.csv
           cat <<EOF > enrich_epss.py
-import json, csv
-with open('grype-results.json') as f: grype = json.load(f)
-epss = {}
-with open('epss_scores.csv') as f:
-  r = csv.DictReader(f)
-  for row in r: epss[row['cve']] = row
-for m in grype.get('matches', []):
-  cve = m.get('vulnerability', {}).get('id')
-  if cve in epss:
-    m['epss'] = {
-      'score': float(epss[cve]['epss']),
-      'percentile': float(epss[cve]['percentile']),
-      'rank': f"{float(epss[cve]['percentile'])*100:.2f}%",
-      'date': epss[cve]['date']
-    }
-with open('grype-results-enriched.json', 'w') as f: json.dump(grype, f, indent=2)
-EOF
+          import json, csv
+          with open('grype-results.json') as f: grype = json.load(f)
+          epss = {}
+          with open('epss_scores.csv') as f:
+            r = csv.DictReader(f)
+            for row in r: epss[row['cve']] = row
+              for m in grype.get('matches', []):
+                cve = m.get('vulnerability', {}).get('id')
+                if cve in epss:
+                  m['epss'] = {
+                     'score': float(epss[cve]['epss']),
+                     'percentile': float(epss[cve]['percentile']),
+                     'rank': f"{float(epss[cve]['percentile'])*100:.2f}%",
+                     'date': epss[cve]['date']
+                   }
+                  with open('grype-results-enriched.json', 'w') as f: json.dump(grype, f, indent=2)
+          EOF
           python3 enrich_epss.py
           echo "First 50 lines of enriched results:" && head -n 50 grype-results-enriched.json
 
