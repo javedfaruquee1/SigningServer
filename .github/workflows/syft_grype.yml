@@ -1,4 +1,4 @@
-name: SBOM with CycloneDX
+name: SBOM & Grype Scan with EPSS Enrichment
 
 on:
   push:
@@ -7,41 +7,65 @@ on:
     branches: [ develop ]
 
 jobs:
-  sbom-scan:
+  sbom-vuln-scan:
     runs-on: ubuntu-latest
 
     steps:
       - name: ⬇️ Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🛠️ Set up environment
+      - name: 🛠️ Set up tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl jq
+          sudo apt-get install -y curl jq python3 python3-pip
+          pip3 install pandas
 
       - name: 📦 Install Syft and Grype
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
 
-      - name: 📝 Generate CycloneDX SBOM
+      - name: 📍 Generate SBOM
         run: |
-          echo "Generating SBOM using Syft..."
+          echo "Generating SBOM..."
           syft . -o cyclonedx-json > sbom.cdx.json
-          echo "📝 SBOM Preview (first 100 lines):"
-          head -n 100 sbom.cdx.json
+          echo "First 50 lines of SBOM:" && head -n 50 sbom.cdx.json
 
-      - name: 🕵️ Scan for vulnerabilities using Grype
+      - name: 🕵️ Run Grype vulnerability scan
         run: |
           echo "Scanning SBOM with Grype..."
-          grype sbom:sbom.cdx.json -o cyclonedx-json > grype-results.cdx.json
-          echo "🛡 Vulnerability Report Preview (first 100 lines):"
-          head -n 100 grype-results.cdx.json
+          grype sbom:sbom.cdx.json -o json > grype-results.json
+          echo "First 50 lines of Grype results:" && head -n 50 grype-results.json
 
-      - name: 📤 Upload SBOM and Grype results
+      - name: 📊 Enrich with EPSS data
+        run: |
+          curl -o epss_scores.csv https://epss.cyentia.com/epss_scores-current.csv
+          cat <<EOF > enrich_epss.py
+import json, csv
+with open('grype-results.json') as f: grype = json.load(f)
+epss = {}
+with open('epss_scores.csv') as f:
+  r = csv.DictReader(f)
+  for row in r: epss[row['cve']] = row
+for m in grype.get('matches', []):
+  cve = m.get('vulnerability', {}).get('id')
+  if cve in epss:
+    m['epss'] = {
+      'score': float(epss[cve]['epss']),
+      'percentile': float(epss[cve]['percentile']),
+      'rank': f"{float(epss[cve]['percentile'])*100:.2f}%",
+      'date': epss[cve]['date']
+    }
+with open('grype-results-enriched.json', 'w') as f: json.dump(grype, f, indent=2)
+EOF
+          python3 enrich_epss.py
+          echo "First 50 lines of enriched results:" && head -n 50 grype-results-enriched.json
+
+      - name: 📤 Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SBOM-and-Grype-Scan
+          name: Enriched-Security-Scan
           path: |
             sbom.cdx.json
-            grype-results.cdx.json
+            grype-results.json
+            grype-results-enriched.json
