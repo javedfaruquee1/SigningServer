@@ -27,7 +27,7 @@ jobs:
       - name: 📝 Generate SBOM with Syft
         run: |
           echo "Generating SBOM using Syft..."
-          syft . -o cyclonedx-json > sbom.cdx.json
+          syft scan . -o cyclonedx-json > sbom.cdx.json
           echo "📝 SBOM (first 50 lines):"
           head -n 50 sbom.cdx.json
 
