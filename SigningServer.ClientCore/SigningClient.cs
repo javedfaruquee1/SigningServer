@@ -21,12 +21,11 @@ public interface ISigningClient : IDisposable
     SigningClientConfigurationBase Configuration { get; }
 }
 
-public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClient
+public abstract class SigningClient<TConfiguration> : ISigningClient
     where TConfiguration : SigningClientConfigurationBase
 {
     protected ServerCapabilitiesResponse? ServerCapabilities { get; set; }
     protected HashSet<string> SupportedFileFormats { get; } = new(StringComparer.OrdinalIgnoreCase);
-    
 
     public TConfiguration Configuration { get; }
     SigningClientConfigurationBase ISigningClient.Configuration => Configuration;
@@ -65,6 +64,30 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
         Logger.LogInformation("Found {numberOfFiles} files to sign, will sign with {numberOfWorkers} worker", numberOfFiles,
             numberOfWorkers);
 
+        var duplicateFileLookup = new ConcurrentDictionary<string, string>();
+        Func<string, string> createDuplicateFileKey;
+        
+        switch (Configuration.DuplicateFileDetection)
+        {
+            case DuplicateFileDetectionMode.None:
+                createDuplicateFileKey = _ => Guid.NewGuid().ToString(); // no duplicate detection
+                break;
+            case DuplicateFileDetectionMode.ByFileName:
+                createDuplicateFileKey = Path.GetFileName;
+                break;
+            case DuplicateFileDetectionMode.ByFileHash:
+                createDuplicateFileKey = filePath =>
+                {
+                    using var stream = new BufferedStream(File.OpenRead(filePath), 100000);
+                    var sha = SHA256.Create();
+                    var checksum = sha.ComputeHash(stream);
+                    return Convert.ToHexString(checksum);
+                };
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+
         var sw = Stopwatch.StartNew();
         var cancellationSource = new CancellationTokenSource();
         Exception? mainException = null;
@@ -73,7 +96,10 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
             {
                 try
                 {
-                    await SignFilesAsync(processingQueue, cancellationSource.Token);
+                    await SignFilesAsync(processingQueue,
+                        duplicateFileLookup, 
+                        createDuplicateFileKey,
+                        cancellationSource.Token);
                 }
                 catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
                 {
@@ -131,14 +157,17 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
                 var error = $"Certificate Loading Failed with error '{responseDto.ErrorMessage}'";
                 throw new SigningFailedException(error);
             case LoadCertificateResponseStatus.CertificateNotLoadedUnauthorized:
-                Logger.LogError("The specified username and password are not recognized on the server");
+                Logger.LogError("The specified username and password are not recognized on the server ({Status}, {Username})", responseDto.Status, Configuration.CredentialInfo);
                 throw new UnauthorizedAccessException();
             default:
                 throw new ArgumentOutOfRangeException();
         }
     }
 
-    private async Task SignFilesAsync(ConcurrentQueue<string> processingQueue, CancellationToken cancellationToken)
+    private async Task SignFilesAsync(ConcurrentQueue<string> processingQueue, 
+        ConcurrentDictionary<string, string> duplicateFileLookup,
+        Func<string, string> createDuplicateFileKey,
+        CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested && processingQueue.TryDequeue(out var nextFile))
         {
@@ -148,7 +177,10 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
             }
             else
             {
-                await DoSignFileAsync(nextFile, cancellationToken);
+                await DoSignFileAsync(nextFile,
+                    duplicateFileLookup,
+                    createDuplicateFileKey,
+                    cancellationToken);
             }
         }
     }
@@ -194,7 +226,7 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
                             $"Signing Failed with error '{responseDto.ErrorMessage}' (sign time: {responseDto.SignTimeInMilliseconds:0}ms)";
                         throw new SigningFailedException(error);
                     case SignHashResponseStatus.HashNotSignedUnauthorized:
-                        Logger.LogError("The specified username and password are not recognized on the server");
+                        Logger.LogError("The specified username and password are not recognized on the server ({Status}, {Username})", responseDto.Status, Configuration.CredentialInfo);
                         throw new UnauthorizedAccessException();
                     default:
                         throw new ArgumentOutOfRangeException();
@@ -233,7 +265,7 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
 
     private async Task<byte[]> HashFileAsync(string file, CancellationToken cancellationToken)
     {
-        using var hashAlg = CryptoConfig.CreateFromName(Configuration.HashAlgorithm ?? "SHA256") as HashAlgorithm;
+        using var hashAlg = CryptoUtils.CreateHashAlgorithmFromName(Configuration.HashAlgorithm ?? "SHA256");
         if (hashAlg == null)
         {
             throw new UnsupportedFileFormatException($"Unsupported hash algorithm {Configuration.HashAlgorithm}");
@@ -259,7 +291,10 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
         CancellationToken cancellationToken,
         CancellationToken fileCompletedToken);
 
-    private async Task DoSignFileAsync(string file, CancellationToken cancellationToken)
+    private async Task DoSignFileAsync(string file, 
+        ConcurrentDictionary<string, string> duplicateFileLookup,
+        Func<string, string> createDuplicateFileKey,
+        CancellationToken cancellationToken)
     {
         var info = new FileInfo(file);
 
@@ -282,6 +317,18 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
                 sw.Start();
 
                 Logger.LogInformation("Start signing file {fileName}", info.FullName);
+
+                var duplicateFileKey = createDuplicateFileKey(info.FullName);
+                if (duplicateFileLookup.TryGetValue(duplicateFileKey, out var alreadySignedFilePath))
+                {
+                    Logger.LogInformation("Found already signed file {existingFileName}, will re-use local file", alreadySignedFilePath);
+                    File.Copy(alreadySignedFilePath, info.FullName, true);
+                    Logger.LogTrace("File copied from  file {existingFileName} to {targetFileName}", alreadySignedFilePath,
+                        info.FullName);
+                    return;
+                }
+                
+                
                 var results = SignFileAsync(file, cancellationToken, fileCompletedSource.Token);
 
                 var status = SignFileResponseStatus.FileSigned;
@@ -341,7 +388,7 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
                                 $"Signing Failed with error '{errorMessage}' (upload time: {uploadTime.TotalMilliseconds:0}ms, sign time: {signTime.TotalMilliseconds:0}ms)";
                             throw new SigningFailedException(error);
                         case SignFileResponseStatus.FileNotSignedUnauthorized:
-                            Logger.LogError("The specified username and password are not recognized on the server");
+                            Logger.LogError("The specified username and password are not recognized on the server ({Status}, {Username})", status, Configuration.CredentialInfo);
                             throw new UnauthorizedAccessException();
                         default:
                             throw new ArgumentOutOfRangeException();
@@ -382,6 +429,8 @@ public abstract class SigningClient<TConfiguration> : IDisposable, ISigningClien
                                     await fileInfo.ContentStream.CopyToAsync(targetFile, cancellationToken);
                                 }
 
+                                duplicateFileLookup[duplicateFileKey] = info.FullName;
+                                
                                 downloadWatch.Stop();
                                 Logger.LogTrace("Downloaded file {fileName} in {downloadTime}ms", fileInfo.FileName,
                                     downloadWatch.ElapsedMilliseconds);

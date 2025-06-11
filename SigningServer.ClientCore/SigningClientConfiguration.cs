@@ -8,11 +8,28 @@ using SigningServer.Core;
 
 namespace SigningServer.ClientCore;
 
+public enum DuplicateFileDetectionMode
+{
+    None,
+    ByFileName,
+    ByFileHash
+}
+
 /// <summary>
 /// Represents the signing client 
 /// </summary>
-public class SigningClientConfigurationBase
+public abstract class SigningClientConfigurationBase
 {
+    /// <summary>
+    /// Whether to execute signing or not, useful if you have to enable/disable signing temporarily.
+    /// </summary>
+    public bool IsSigningDisabled { get; set; }
+
+    /// <summary>
+    /// Gets the credential info to use for authentication and certificate selection.
+    /// </summary>
+    public abstract string CredentialInfo { get; }
+    
     /// <summary>
     /// Whether to overwrite existing signatures or fail when signatures are present.
     /// </summary>
@@ -81,12 +98,17 @@ public class SigningClientConfigurationBase
     /// </summary>
     public LoadCertificateFormat? LoadCertificateExportFormat { get; set; }
 
+    /// <summary>
+    /// Whether to detect duplicate files being side.
+    /// </summary>
+    public DuplicateFileDetectionMode DuplicateFileDetection { get; set; } = DuplicateFileDetectionMode.None;
+
     public virtual bool FillFromArgs(string[] args, ILogger log)
     {
         for (var i = 0; i < args.Length; i++)
         {
             var arg = args[i];
-            if (arg.StartsWith("-"))
+            if (arg.StartsWith('-'))
             {
                 if (!HandleArg(log, arg.ToLowerInvariant(), args, ref i))
                 {
@@ -96,15 +118,7 @@ public class SigningClientConfigurationBase
             else
             {
                 arg = arg.Trim('"');
-                if (File.Exists(arg) || Directory.Exists(arg))
-                {
-                    Sources.Add(arg);
-                }
-                else
-                {
-                    log.LogError("Config could not be loaded: File or Directory not found '{file}'", arg);
-                    return false;
-                }
+                Sources.Add(arg);
             }
         }
 
@@ -115,6 +129,12 @@ public class SigningClientConfigurationBase
     {
         switch (arg)
         {
+            // handled by DefaultSigningConfigurationLoader
+            case "-c":
+            case "--config":
+                i++;
+                return true;
+                
             case "-h":
             case "--hash-algorithm":
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
@@ -270,8 +290,6 @@ public class SigningClientConfigurationBase
 
     public static void PrintUsage(TextWriter writer)
     {
-        Console.WriteLine("options: ");
-
         Console.WriteLine("  --help, -h");
         Console.WriteLine("      Print this help.");
 

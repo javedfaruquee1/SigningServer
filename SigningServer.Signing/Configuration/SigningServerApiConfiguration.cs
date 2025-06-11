@@ -93,7 +93,7 @@ public class SigningServerApiConfiguration
         switch (responseDto!.Status)
         {
             case LoadCertificateResponseStatus.CertificateLoaded:
-                return new X509Certificate2(Convert.FromBase64String(responseDto.CertificateData!));
+                return X509CertificateLoader.LoadPkcs12(Convert.FromBase64String(responseDto.CertificateData!), null);
             case LoadCertificateResponseStatus.CertificateNotLoadedError:
                 throw new InvalidConfigurationException("Could not load certificate: " + responseDto.ErrorMessage);
             case LoadCertificateResponseStatus.CertificateNotLoadedUnauthorized:
@@ -251,29 +251,7 @@ public class SigningServerApiConfiguration
 
         public override byte[] Decrypt(byte[] data, RSAEncryptionPadding padding)
         {
-            try
-            {
-                var response = _client.PostAsJsonAsync("signing/decryptrsa", new DecryptRsaRequestDto(
-                    _configuration.Username,
-                    _configuration.Password,
-                    Convert.ToBase64String(data),
-                    padding.OaepHashAlgorithm.Name!,
-                    padding.Mode)).GetAwaiter().GetResult();
-
-                var responseDto = response.Content.ReadFromJsonAsync<DecryptRsaResponseDto>()
-                    .GetAwaiter().GetResult();
-
-                if (!string.IsNullOrEmpty(responseDto?.ErrorMessage))
-                {
-                    throw new CryptographicException(responseDto.ErrorMessage);
-                }
-
-                return Convert.FromBase64String(responseDto!.Data!);
-            }
-            catch (Exception e)
-            {
-                throw new CryptographicException("Error calling SigningServer", e);
-            }
+            throw new NotSupportedException();
         }
 
         public override byte[] SignHash(byte[] hash, HashAlgorithmName hashAlgorithm, RSASignaturePadding padding)

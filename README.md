@@ -8,6 +8,10 @@ this issue
 by providing the code-signing as a service. You setup on a central signing server this software as a windows service and
 using the shipped client any other client can ask the central server to sign the files.
 
+# Features
+
+See the [Features](Docs/features.md) document for a detailed list of features.
+
 ## Versioning
 Unless stated differently in the release notes, we use [Semantic Versioning](https://semver.org/).
 
@@ -58,7 +62,22 @@ specific settings are nested in the `"SigningServer` key.
             }
         }
     },
+    // some general system information presented on the landing page (available on the hostname+port as configured)
+    "SystemInfo": {
+        // The name of the service, displayed as headline
+        "ServiceName": "MyCorp Signing Server",
+        // A short description of the service displayed on the landing page for users to understand where they are 
+        "ServiceDescription": "This is the signing server for MyCrop. Check the knowledge base link below for more info.",
+        // A link to the support page where users can get help
+        "SupportLink": "https://mycorp.com/support",
+        // A link to a knowledge base article describing this service and how to gain access.
+        "KnowledgeBaseLink": "https://mycorp.com/signing-server-kb"
+    },
+            
+    // the service configuration
     "SigningServer": {
+        // whether to do internal certificate handle pooling or reuse the certificate instance (can improve USB token resiliance)
+        "UseCertificatePooling": true,
         // The directory where the server will put temporarily the files during signing
         "WorkingDirectory": "C:\\SigningServer\\WorkingDirectory",
         // A RFC-3161 compliant timestamping server which should be used. 
@@ -78,10 +97,14 @@ specific settings are nested in the `"SigningServer` key.
                 // Can be removed or left empty for the default certificate
                 // which should be used in case the client does not supply credentials.
                 // There can only be one certificate without username and password 
-
-                "Username": "", // The plain text username to use this certificate
-                "Password": "", // The plain text password to use this certificate
-
+                "CertificateName": "MyCodeSigningCert", // The name used in logging and reporting areas
+                // A list of credentials which can be used to select this certificate,
+                // Leave this empty or add a item with username and password set to empty 
+                // To use it as default certificate 
+                "Credentials": [
+                  { "Username": "", "Password": "" }, // default when no credentials are supplied
+                  { "Username": "team01", "Password": "teampass01" } // designated credentials for a team                  
+                ],
                 "Local": {
                     "Thumbprint": "", // The thumbprint of the certificate to load
                     "StoreName": "", // The name of the certificate store to access (AddressBook, AuthRoot, CertificateAuthority, Disallowed, My, Root, TrustedPeople, TrustedPublisher)
@@ -98,8 +121,10 @@ specific settings are nested in the `"SigningServer` key.
             // Example for a certificate from an Azure KeyVault
             {
                 // Same as for local certificates
-                "Username": "azure-keyvault",
-                "Password": "azure-keyvault",
+                "CertificateName": "KeyVaultCert",
+                "Credentials": [
+                  { "Username": "azure-keyvault", "Password": "azure-keyvault" }                  
+                ],
 
                 // Azure specific configuration
                 "Azure": {
@@ -154,9 +179,25 @@ Under Linux use `dotnet SigningServer.Client.dll` instead of the executable. A s
     // the file formats (typical values: SHA1, SHA256, SHA386, SHA512)
     "HashAlgorithm": "SHA256",
     // How often to retry the signing operation until giving up. 
-    "Retry": 1
+    "Retry": 1,
+    // Allows to fully disable the signing performed
+    // This is useful in CI/CD scenarios to keep the signing step as-is 
+    // But control the signing via this flag
+    "IsSigningDisabled": false
 }
 ```
+
+### Environment Variable Configuration
+
+The client can also be configured using environment variables which can be useful in CI/CD environments.
+The software uses the [ASP.net core configuration system](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/configuration/?view=aspnetcore-9.0#evcp) to allow specifying any configuration key through environment variables.
+
+The environment variables are prefixed with `SIGNINGSERVER_CLIENT_`:
+
+* `SIGNINGSERVER_CLIENT_Username=team01`
+* `SIGNINGSERVER_CLIENT_IsSigningDisabled=true`
+
+Be sure to use the latest signing client for this feature to be available.
 
 #### Client Exit Codes
 
