@@ -1,0 +1,47 @@
+name: SBOM with CycloneDX
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  sbom-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Set up environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+
+      - name: 📦 Install Syft and Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: 📝 Generate CycloneDX SBOM
+        run: |
+          echo "Generating SBOM using Syft..."
+          syft . -o cyclonedx-json > sbom.cdx.json
+          echo "📝 SBOM Preview (first 100 lines):"
+          head -n 100 sbom.cdx.json
+
+      - name: 🕵️ Scan for vulnerabilities using Grype
+        run: |
+          echo "Scanning SBOM with Grype..."
+          grype sbom:sbom.cdx.json -o cyclonedx-json > grype-results.cdx.json
+          echo "🛡 Vulnerability Report Preview (first 100 lines):"
+          head -n 100 grype-results.cdx.json
+
+      - name: 📤 Upload SBOM and Grype results
+        uses: actions/upload-artifact@v4
+        with:
+          name: SBOM-and-Grype-Scan
+          path: |
+            sbom.cdx.json
+            grype-results.cdx.json
