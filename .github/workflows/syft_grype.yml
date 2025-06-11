@@ -26,7 +26,7 @@ jobs:
 
       - name: 🧰 Install Bomber
         run: |
-          curl -sL https://github.com/devops-kung-fu/bomber/releases/download/v0.5.1/bomber_0.5.1_linux_amd64.tar.gz -o bomber.zip
+          curl -sSL https://github.com/devops-kung-fu/bomber/releases/download/v0.5.1/bomber_0.5.1_linux_amd64.tar.gz -o bomber.tar.gz
           tar -xzf bomber.tar.gz
           chmod +x bomber
           sudo mv bomber /usr/local/bin
