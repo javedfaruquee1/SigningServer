@@ -24,6 +24,13 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
 
+      - name: 🧰 Install Bomber
+        run: |
+          curl -sL https://github.com/devops-kung-fu/bomber/releases/latest/download/bomber-linux-amd64.zip -o bomber.zip
+          unzip bomber.zip
+          chmod +x bomber
+          sudo mv bomber /usr/local/bin
+          
       - name: 📝 Generate SBOM with Syft
         run: |
           echo "Generating SBOM using Syft..."
@@ -37,6 +44,13 @@ jobs:
           grype sbom:sbom.cdx.json -o json > grype-results.json
           echo "🛡 Vulnerabilities (first 50 lines):"
           head -n 50 grype-results.json
+
+      - name: 🧠 Enrich with EPSS & scan SBOM (Bomber)
+        run: |
+          echo "Running Bomber with EPSS enrichment..."
+          bomber scan sbom.cdx.json --output json,table --enrich epss > bomber-results.json
+          echo "📈 Bomber Results:"
+          cat bomber-results.json | jq '.findings[0:5]'
 
       - name: 🔍 Enrich vulnerabilities with EPSS
         run: |
@@ -68,3 +82,4 @@ jobs:
             sbom.cdx.json
             grype-results.json
             grype-results-enriched.json
+            bomber-results.json
